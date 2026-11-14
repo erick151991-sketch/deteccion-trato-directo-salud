@@ -1,0 +1,4 @@
+modelo,balanceo,filas_entrenamiento,auc_roc,auc_pr,precision,recall,f1,segundos,parametros,epocas_usadas
+mlp_simple,ponderacion,55073,0.8273,0.6239,0.4876,0.6561,0.5595,10.6,11265,30
+mlp_profunda,ponderacion,55073,0.8562,0.6357,0.4327,0.7218,0.541,16.8,79361,20
+red_residual,ponderacion,55073,0.8552,0.6258,0.4905,0.6366,0.5541,18.9,89537,18

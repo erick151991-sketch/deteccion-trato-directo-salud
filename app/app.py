@@ -1,0 +1,292 @@
+# -*- coding: utf-8 -*-
+"""
+RiesgoTD: aplicación web de apoyo a la fiscalización de compras públicas
+por trato directo en el sector Salud.
+
+Backend en Flask y frontend en HTML servido por el mismo proceso. Expone
+además una API REST, de modo que el modelo pueda consumirse desde otros
+sistemas sin pasar por la interfaz.
+
+Se ejecuta con:  python app/app.py
+"""
+import csv
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(RAIZ / 'src'))
+
+import joblib
+import numpy as np
+import pandas as pd
+from flask import Flask, jsonify, render_template, request
+
+from config import MODELOS, TABLAS
+
+# Las carpetas se declaran de forma explícita para que la aplicación pueda
+# ejecutarse desde cualquier directorio de trabajo.
+app = Flask(
+    __name__,
+    template_folder=str(Path(__file__).resolve().parent / 'templates'),
+)
+REGISTRO = RAIZ / 'resultados' / 'registro_predicciones.csv'
+
+# ---------------------------------------------------------------- carga
+PREPROCESADOR = joblib.load(MODELOS / 'preprocesador.joblib')
+MODELO = joblib.load(MODELOS / 'mejor_clasico.joblib')
+UMBRAL = json.loads((MODELOS / 'umbral.json').read_text(encoding='utf-8'))['umbral']
+META = json.loads((MODELOS / 'valores_por_defecto.json').read_text(encoding='utf-8'))
+MEJOR = json.loads((MODELOS / 'mejor.json').read_text(encoding='utf-8'))
+
+DEFECTOS = META['defectos']
+OPCIONES = META['opciones']
+COLUMNAS = META['columnas']
+
+# Tablas de frecuencia de las variables de alta cardinalidad, calculadas con
+# las filas de entrenamiento por src/frecuencias.py. Sin estas tablas la
+# variable frec_OrganismoPublico quedaria congelada en su valor por defecto,
+# y es la primera variable del listado SHAP, asi que el formulario perderia
+# la capacidad de distinguir entre un organismo y otro.
+try:
+    FRECUENCIAS = json.loads(
+        (MODELOS / 'frecuencias.json').read_text(encoding='utf-8'))
+except Exception:
+    FRECUENCIAS = {}
+
+# Los selectores muestran el nombre y la aplicacion traduce ese nombre a la
+# frecuencia relativa que espera el modelo.
+for _columna, _tabla in FRECUENCIAS.items():
+    _ordenadas = sorted(_tabla.items(), key=lambda par: -par[1])[:200]
+    OPCIONES['frec_' + _columna] = [nombre for nombre, _ in _ordenadas]
+
+# Campos que se piden en el formulario. El resto se completa con el valor
+# habitual del conjunto de datos, para que la interfaz sea usable.
+CAMPOS_FORMULARIO = [
+    ('MontoTotalOC_PesosChilenos', 'Monto total de la orden (CLP)', 'numero'),
+    ('TotalNetoOC', 'Total neto de la orden (CLP)', 'numero'),
+    ('precioNeto', 'Precio unitario neto (CLP)', 'numero'),
+    ('cantidad', 'Cantidad', 'numero'),
+    ('totalLineaNeto', 'Total neto de la linea (CLP)', 'numero'),
+    ('PromedioCalificacion', 'Calificacion promedio del proveedor', 'numero'),
+    ('lineas_en_la_orden', 'Numero de lineas de la orden', 'numero'),
+    ('Estado', 'Estado de la orden', 'lista'),
+    ('FormaPago', 'Forma de pago', 'lista'),
+    ('RegionUnidadCompra', 'Region de la unidad de compra', 'lista'),
+    ('RubroN1', 'Rubro', 'lista'),
+    ('frec_OrganismoPublico', 'Organismo publico comprador', 'lista'),
+    ('frec_Categoria', 'Categoria del producto o servicio', 'lista'),
+]
+
+try:
+    IMPORTANCIA = pd.read_csv(TABLAS / 'importancia_shap.csv').head(12)
+except Exception:
+    IMPORTANCIA = pd.DataFrame(columns=['variable', 'shap_medio_abs'])
+
+try:
+    EVALUACION = pd.read_csv(TABLAS / 'evaluacion_prueba.csv')
+except Exception:
+    EVALUACION = pd.DataFrame()
+
+EXPLICADOR = None
+try:
+    import shap
+    EXPLICADOR = shap.TreeExplainer(MODELO)
+except Exception:
+    EXPLICADOR = None
+
+
+def nombres_columnas():
+    try:
+        return list(PREPROCESADOR.get_feature_names_out())
+    except Exception:
+        return []
+
+
+NOMBRES = nombres_columnas()
+
+
+# ------------------------------------------------------------- utilidades
+def a_numero(valor):
+    """
+    Convierte a numero un texto escrito con separadores en castellano.
+
+    El formulario acepta tanto 3850000 como 3.850.000 y tanto 3,85 como 3.85.
+    La regla es simple: si el texto trae una coma, la coma es el separador
+    decimal y el punto es separador de miles; si no trae coma, el punto se
+    deja tal cual, porque en ese caso es el separador decimal. Sin esta regla
+    un valor como 3.85 se convertia en 385, que es un error de dos ordenes de
+    magnitud en una variable que el modelo usa.
+    """
+    texto = str(valor).strip().replace(' ', '')
+    if not texto:
+        raise ValueError('vacio')
+    if ',' in texto:
+        texto = texto.replace('.', '').replace(',', '.')
+    return float(texto)
+
+
+def armar_fila(entrada):
+    """Completa una fila con los valores recibidos y los valores por defecto."""
+    fila = dict(DEFECTOS)
+    for clave, valor in entrada.items():
+        if clave not in fila:
+            continue
+        # Los campos frec_* llegan como nombre de organismo o de categoria y
+        # se traducen con la tabla de frecuencias del entrenamiento. Un nombre
+        # que no estaba en entrenamiento toma frecuencia cero, que es el mismo
+        # valor que le asigna preparacion.py.
+        if clave.startswith('frec_') and clave[5:] in FRECUENCIAS:
+            if str(valor) in FRECUENCIAS[clave[5:]]:
+                fila[clave] = float(FRECUENCIAS[clave[5:]][str(valor)])
+            else:
+                try:
+                    fila[clave] = a_numero(valor)
+                except (TypeError, ValueError):
+                    fila[clave] = 0.0
+            continue
+        if isinstance(DEFECTOS.get(clave), float):
+            try:
+                fila[clave] = a_numero(valor)
+            except (TypeError, ValueError):
+                pass
+        else:
+            fila[clave] = str(valor)
+    # Variables derivadas que dependen de las que entrega el usuario
+    monto = fila.get('MontoTotalOC_PesosChilenos') or 0
+    for base in ['MontoTotalOC_PesosChilenos', 'TotalNetoOC', 'precioNeto',
+                 'totalLineaNeto', 'cantidad', 'Impuestos']:
+        if 'log_' + base in fila:
+            fila['log_' + base] = float(np.log1p(max(fila.get(base, 0) or 0, 0)))
+    if 'razon_impuesto' in fila and monto:
+        fila['razon_impuesto'] = (fila.get('Impuestos', 0) or 0) / monto
+    if 'razon_linea_total' in fila and (fila.get('TotalNetoOC') or 0):
+        fila['razon_linea_total'] = (fila.get('totalLineaNeto', 0) or 0) / fila['TotalNetoOC']
+    return pd.DataFrame([[fila[c] for c in COLUMNAS]], columns=COLUMNAS)
+
+
+def clasificar(probabilidad):
+    """
+    Traduce la probabilidad en una recomendacion de revision.
+
+    La frontera entre revisar y no revisar es el umbral justificado en el
+    informe, que es el que maximiza el F1 sobre el conjunto de validacion.
+    Por encima de ese umbral la compra se revisa. El corte adicional en 0,5
+    no cambia la decision: solo separa, dentro de las compras que hay que
+    revisar, las que conviene revisar primero.
+    """
+    if probabilidad >= 0.5:
+        return 'alto', 'Revisar con prioridad'
+    if probabilidad >= UMBRAL:
+        return 'medio', 'Revisar'
+    return 'bajo', 'Sin senales de alerta'
+
+
+def explicar(matriz):
+    """Devuelve los factores que más empujan la predicción de esta compra."""
+    if EXPLICADOR is None or not NOMBRES:
+        return []
+    try:
+        valores = EXPLICADOR.shap_values(matriz)
+        if isinstance(valores, list):
+            valores = valores[1]
+        valores = np.array(valores)
+        if valores.ndim == 3:
+            valores = valores[:, :, 1]
+        pares = sorted(zip(NOMBRES, valores[0]), key=lambda t: -abs(t[1]))[:6]
+        return [{'variable': n.replace('num__', '').replace('cat__', ''),
+                 'aporte': round(float(v), 4),
+                 'sentido': 'sube' if v > 0 else 'baja'} for n, v in pares]
+    except Exception:
+        return []
+
+
+def registrar(probabilidad, nivel, origen):
+    """Deja traza de cada predicción para el panel de monitoreo."""
+    nuevo = not REGISTRO.exists()
+    REGISTRO.parent.mkdir(parents=True, exist_ok=True)
+    with REGISTRO.open('a', newline='', encoding='utf-8') as fichero:
+        escritor = csv.writer(fichero)
+        if nuevo:
+            escritor.writerow(['momento', 'probabilidad', 'nivel', 'origen'])
+        escritor.writerow([datetime.now().isoformat(timespec='seconds'),
+                           round(float(probabilidad), 6), nivel, origen])
+
+
+# ----------------------------------------------------------------- rutas
+@app.route('/', methods=['GET', 'POST'])
+def inicio():
+    resultado = None
+    enviado = {}
+    if request.method == 'POST':
+        enviado = request.form.to_dict()
+        matriz = PREPROCESADOR.transform(armar_fila(enviado))
+        probabilidad = float(MODELO.predict_proba(matriz)[0, 1])
+        nivel, accion = clasificar(probabilidad)
+        registrar(probabilidad, nivel, 'formulario')
+        resultado = {
+            'probabilidad': round(probabilidad * 100, 1),
+            'nivel': nivel,
+            'accion': accion,
+            'umbral': round(UMBRAL * 100, 1),
+            'factores': explicar(matriz),
+        }
+    return render_template('inicio.html', campos=CAMPOS_FORMULARIO,
+                           opciones=OPCIONES, defectos=DEFECTOS,
+                           resultado=resultado, enviado=enviado,
+                           modelo=MEJOR)
+
+
+@app.route('/api/evaluar', methods=['POST'])
+def api_evaluar():
+    datos = request.get_json(silent=True) or {}
+    matriz = PREPROCESADOR.transform(armar_fila(datos))
+    probabilidad = float(MODELO.predict_proba(matriz)[0, 1])
+    nivel, accion = clasificar(probabilidad)
+    registrar(probabilidad, nivel, 'api')
+    return jsonify({'probabilidad': probabilidad, 'nivel': nivel,
+                    'accion': accion, 'umbral': UMBRAL,
+                    'factores': explicar(matriz)})
+
+
+# Tasa de trato directo del universo de entrenamiento. Es la referencia
+# contra la que se compara la probabilidad media de las evaluaciones.
+TASA_BASE = 0.0955
+DESVIO_ALERTA = 0.05
+
+
+@app.route('/monitoreo')
+def monitoreo():
+    historial = pd.DataFrame()
+    if REGISTRO.exists():
+        historial = pd.read_csv(REGISTRO)
+    media = float(historial['probabilidad'].mean()) if len(historial) else None
+    desvio = (media - TASA_BASE) if media is not None else None
+    resumen = {
+        'total': len(historial),
+        'por_nivel': (historial['nivel'].value_counts().to_dict()
+                      if len(historial) else {}),
+        'probabilidad_media': round(media, 4) if media is not None else None,
+        'tasa_base': TASA_BASE,
+        'desvio': round(desvio, 4) if desvio is not None else None,
+        'alerta': (desvio is not None and abs(desvio) > DESVIO_ALERTA),
+        'umbral_alerta': DESVIO_ALERTA,
+        'ultima': (historial['momento'].iloc[-1] if len(historial) else None),
+    }
+    return render_template('monitoreo.html', resumen=resumen,
+                           evaluacion=EVALUACION.to_dict('records'),
+                           importancia=IMPORTANCIA.to_dict('records'),
+                           modelo=MEJOR,
+                           historial=historial.tail(20).to_dict('records'))
+
+
+@app.route('/salud')
+def salud():
+    return jsonify({'estado': 'ok', 'modelo': MEJOR.get('modelo'),
+                    'umbral': UMBRAL})
+
+
+if __name__ == '__main__':
+    print('RiesgoTD en http://127.0.0.1:5000/')
+    app.run(host='127.0.0.1', port=5000, debug=False)

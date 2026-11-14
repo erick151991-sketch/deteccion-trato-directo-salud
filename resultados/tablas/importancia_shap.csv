@@ -1,0 +1,41 @@
+variable,shap_medio_abs
+num__lineas_en_la_orden,0.52586
+num__frec_OrganismoPublico,0.46613
+num__precioNeto,0.38665
+num__frec_NombreProveedor,0.31058
+num__frec_Categoria,0.24952
+num__frec_UnidadCompra,0.2476
+num__cantidad,0.22388
+num__Impuestos,0.21651
+cat__RegionUnidadCompra_Biobío,0.19174
+num__razon_impuesto,0.17661
+cat__RegionUnidadCompra_Maule,0.15992
+cat__UnidadMedida_Unidad no definida,0.13831
+num__dia_del_mes,0.11961
+cat__RegionUnidadCompra_Coquimbo,0.11285
+num__MontoTotalOC_PesosChilenos,0.10816
+num__razon_linea_total,0.10136
+cat__RegionProveedor_Metropolitana,0.09516
+cat__RegionUnidadCompra_Valparaíso,0.08793
+cat__RegionUnidadCompra_Magallanes,0.08349
+num__PromedioCalificacion,0.075
+cat__RegionUnidadCompra_Arica y Parinacota,0.07399
+num__dia_semana,0.06774
+num__totalLineaNeto,0.06452
+num__TotalNetoOC,0.06439
+cat__RubroN1_Equipamiento y suministros médicos,0.06229
+cat__RegionUnidadCompra_Antofagasta,0.05847
+cat__RegionUnidadCompra_Ñuble,0.05376
+cat__RegionUnidadCompra_Aysén,0.04381
+cat__RegionProveedor_Biobío,0.04202
+cat__Estado_Recepcion Conforme,0.0377
+cat__UnidadMedida_kilogramo,0.03591
+"cat__RubroN1_Artículos para estructuras, obras y construcciones",0.03482
+cat__RegionUnidadCompra_Los Ríos,0.03404
+cat__RegionUnidadCompra_O'Higgins,0.03189
+cat__UnidadMedida_Unidad,0.03095
+cat__RubroN1_Equipamiento para laboratorios,0.02967
+num__falta_RegionProveedor,0.02964
+cat__RegionUnidadCompra_Los Lagos,0.02852
+cat__FormaPago_39,0.02794
+cat__RegionUnidadCompra_Araucanía,0.02711

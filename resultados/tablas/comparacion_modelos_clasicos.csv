@@ -1,0 +1,13 @@
+modelo,balanceo,filas_entrenamiento,auc_roc,auc_pr,precision,recall,f1,segundos
+regresion_logistica,sin_balanceo,55073,0.8016,0.3724,0.5629,0.1712,0.2626,3.3
+regresion_logistica,ponderacion,55073,0.8072,0.339,0.231,0.6922,0.3464,3.1
+regresion_logistica,smote,100032,0.8048,0.3401,0.2302,0.6965,0.3461,6.1
+regresion_logistica,submuestreo,10114,0.8057,0.3279,0.2276,0.6857,0.3418,1.9
+bosque_aleatorio,sin_balanceo,55073,0.92,0.6885,0.9509,0.224,0.3626,7.4
+bosque_aleatorio,ponderacion,55073,0.9042,0.6339,0.6066,0.5181,0.5588,7.5
+bosque_aleatorio,smote,100032,0.9034,0.6466,0.6087,0.5361,0.5701,15.8
+bosque_aleatorio,submuestreo,10114,0.8845,0.5648,0.3495,0.7016,0.4666,1.0
+gradient_boosting,sin_balanceo,55073,0.9289,0.7283,0.8487,0.4458,0.5846,4.7
+gradient_boosting,ponderacion,55073,0.9168,0.7048,0.5548,0.724,0.6282,5.0
+gradient_boosting,smote,100032,0.9072,0.6869,0.6715,0.5715,0.6175,8.6
+gradient_boosting,submuestreo,10114,0.9132,0.6554,0.4647,0.7695,0.5794,2.2
