@@ -1,186 +1,238 @@
-# Detección temprana de riesgo en compras por trato directo del sector Salud
+# Detección de trato directo en compras públicas de Salud
 
-Proyecto del curso **Aprendizaje de Máquinas (ACIF104)** — Universidad Andrés
-Bello, Ingeniería Civil Informática. Fase 2.
 
-El Estado de Chile compra a través de Mercado Público. Una parte de esas
-compras no pasa por licitación, sino que se adjudica de forma directa a un
-proveedor. Ese mecanismo, el **trato directo**, es excepcional por ley, pero
-hoy cuenta con un único control automatizado y de tipo formal. Este proyecto
-entrena modelos de aprendizaje automático que, a partir de las
-características de la propia compra, estiman qué tan parecida es al perfil de
-un trato directo, de modo que la fiscalización pueda priorizar qué revisar.
+La idea del proyecto nació a partir de una pregunta simple: ¿es posible usar aprendizaje automático para identificar compras públicas que tengan características similares a un trato directo? Para explorarlo, trabajamos con órdenes de compra del sector Salud publicadas en Mercado Público y construimos un modelo que entrega una probabilidad de trato directo para cada registro.
 
-## Qué hay en este repositorio
+El resultado debe entenderse como una herramienta de apoyo para priorizar revisiones. El modelo no determina que una compra sea irregular ni reemplaza el análisis de una persona.
 
-```
-.
+## Objetivo
+
+El objetivo principal es desarrollar un flujo completo de análisis de datos que permita:
+
+- cargar y revisar el dataset original;
+- limpiar y preparar la información;
+- comparar distintos modelos de machine learning y deep learning;
+- evaluar los resultados con datos no utilizados durante el entrenamiento;
+- explicar las predicciones mediante SHAP;
+- presentar el modelo a través de una aplicación web sencilla.
+
+## Estructura del proyecto
+
+```text
+deteccion-trato-directo-salud/
+├── data/
+│   └── oc_salud_2026_08.csv
 ├── src/
-│   ├── config.py         Rutas, columnas y parámetros del proyecto
-│   ├── preparacion.py    Carga, limpieza, variables y partición por orden
-│   ├── eda.py            Análisis exploratorio: figuras y tablas
-│   ├── frecuencias.py    Tablas de frecuencia que usa la aplicación web
-│   ├── modelado.py       3 modelos clásicos x 4 estrategias de balanceo
-│   ├── dl.py             3 arquitecturas de aprendizaje profundo
-│   └── evaluacion.py     Métricas sobre datos no vistos, SHAP y K-Means
+│   ├── config.py
+│   ├── preparacion.py
+│   ├── eda.py
+│   ├── modelado.py
+│   ├── dl.py
+│   ├── evaluacion.py
+│   └── frecuencias.py
 ├── app/
-│   ├── app.py            Backend Flask + API REST
-│   └── templates/        Frontend
+│   ├── app.py
+│   └── templates/
 ├── resultados/
-│   ├── figuras/          Gráficos generados
-│   ├── tablas/           Métricas y tablas en CSV
-│   └── modelos/          Modelos entrenados
+│   ├── figuras/
+│   ├── tablas/
+│   └── modelos/
 ├── requirements.txt
-└── EJECUTAR.bat          Ejecuta todo el pipeline en Windows
+├── EJECUTAR.bat
+└── README.md
 ```
 
-## Datos
+Los archivos de la carpeta `src` cumplen las siguientes funciones:
 
-El conjunto de datos son las órdenes de compra del sector Salud publicadas en
-Mercado Público durante agosto de 2026: **137.015 filas y 25 columnas**.
+- `preparacion.py`: carga, limpieza, transformación y división de los datos.
+- `eda.py`: análisis exploratorio, tablas y gráficos.
+- `modelado.py`: entrenamiento y comparación de modelos clásicos.
+- `dl.py`: entrenamiento de las redes neuronales.
+- `evaluacion.py`: evaluación final, curvas, matriz de confusión, SHAP y K-Means.
+- `frecuencias.py`: genera las tablas que necesita la aplicación web.
 
-El archivo **no se versiona** en el repositorio por su tamaño (74,6 MB). Para
-reproducir el proyecto hay que dejarlo en `data/oc_salud_2026_08.csv`. El
-separador de campos es `;`.
+## Dataset
 
-Tras descartar las compras ágiles y los convenios marco, el universo de
-trabajo queda en **86.829 líneas repartidas en 38.787 órdenes de compra**, con
-un **9,55 % de tratos directos**.
+El dataset utilizado contiene órdenes de compra del sector Salud correspondientes a agosto de 2026. El archivo original tiene aproximadamente 137 mil filas y 25 columnas.
 
-### Cinco decisiones que condicionan todo el modelado
+El CSV no está incluido directamente en el repositorio porque pesa cerca de 75 MB. Para ejecutar todo el proyecto se debe copiar con el siguiente nombre y ubicación:
 
-1. **Se excluyen las columnas que filtran la etiqueta.** `Tipo`,
-   `DescripcionTipoOC` y `EsCompraAgil` determinan `EsTratoDirecto` al 100 %.
-   Un modelo que las use alcanza un desempeño perfecto sin aprender nada del
-   problema.
-2. **Se excluyen también los convenios marco.** Una primera versión los dejó
-   dentro y obtuvo un AUC-PR de 0,793. Al revisar los valores SHAP apareció que
-   la variable más influyente era *que faltara la unidad de medida*, con un peso
-   casi triple al de la siguiente. La unidad de medida, el rubro y la categoría
-   faltan exactamente en las 15.813 líneas de convenio marco, y ninguna de ellas
-   es trato directo: el indicador de dato faltante era un sustituto exacto de la
-   columna `Tipo`. Al corregirlo el AUC-PR bajó a 0,743, y esa diferencia es lo
-   que la fuga estaba inflando.
-3. **La codificación por frecuencia se ajusta solo con las filas de
-   entrenamiento.** Una versión anterior la calculaba sobre el universo
-   completo, de modo que la frecuencia de cada organismo y de cada proveedor
-   llevaba dentro información de validación y de prueba. Es una fuga pequeña,
-   pero es una fuga, y además afectaba a la variable que encabezaba el listado
-   SHAP. Al corregirla el AUC-PR de prueba pasó de 0,743 a 0,741, dos
-   milésimas, y `frec_OrganismoPublico` dejó de ser la primera variable del
-   listado SHAP y pasó a la segunda.
-4. **La partición se hace por orden de compra, no por línea.** Cada orden
-   tiene en promedio 2,24 líneas. Repartir al azar por línea dejaría líneas de
-   la misma orden en entrenamiento y en prueba, e inflaría artificialmente las
-   métricas.
-5. **Las dos variables de región se normalizan antes de codificarlas.** En el
-   universo de trabajo, `RegionUnidadCompra` trae 26 etiquetas distintas para
-   las 16 regiones del país y `RegionProveedor` trae 44, porque la misma región
-   aparece con el prefijo «Región de» y sin él, con espacios sobrantes y con
-   acentos distintos. Sin esa limpieza el codificador one-hot reparte entre dos
-   columnas la señal de una sola región.
+```text
+data/oc_salud_2026_08.csv
+```
 
-## Instalación y ejecución
+El archivo utiliza punto y coma (`;`) como separador.
 
-Requisitos: **Python 3.10 o superior** y unos 2 GB libres en disco.
+Durante la preparación se excluyen las compras ágiles y los convenios marco. También se eliminan del modelo las columnas que revelan directamente el mecanismo de compra, ya que producirían fuga de información.
 
-### Opción rápida en Windows
+## Requisitos
 
-1. Copiar `oc_salud_2026_08.csv` dentro de la carpeta `data/`.
-2. Doble clic en `EJECUTAR.bat`.
+Para ejecutar el proyecto se necesita:
 
-El archivo crea el entorno virtual, instala las dependencias y corre las tres
-etapas en orden. El detalle queda en `log_ejecucion.txt`.
+- Python 3.10 o superior;
+- Git, si se desea clonar el repositorio;
+- aproximadamente 2 GB de espacio disponible;
+- conexión a internet durante la instalación de dependencias.
 
-### Paso a paso, en cualquier sistema
+Las bibliotecas necesarias están declaradas en `requirements.txt`.
+
+## Descargar el proyecto
+
+El repositorio se puede clonar con:
+
+```bash
+git clone https://github.com/erick151991-sketch/deteccion-trato-directo-salud.git
+cd deteccion-trato-directo-salud
+```
+
+También se puede descargar desde GitHub usando **Code > Download ZIP**.
+
+## Ejecución rápida en Windows
+
+La forma más simple de ejecutar todo el procesamiento es:
+
+1. Descargar o clonar el repositorio.
+2. Copiar el dataset en `data/oc_salud_2026_08.csv`.
+3. Ejecutar `EJECUTAR.bat` con doble clic.
+
+El archivo crea un entorno virtual, instala las dependencias y ejecuta las etapas del proyecto en orden. El detalle de la ejecución queda guardado en `log_ejecucion.txt`.
+
+La primera ejecución puede tardar varios minutos porque se instalan TensorFlow, SHAP y las demás dependencias.
+
+## Instalación manual
+
+### Windows
+
+Abrir PowerShell dentro de la carpeta del proyecto y ejecutar:
+
+```powershell
+python -m venv venv
+venv\Scripts\activate
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+### Linux, macOS o GitHub Codespaces
 
 ```bash
 python -m venv venv
-venv\Scripts\activate          # en Linux o macOS: source venv/bin/activate
+source venv/bin/activate
+python -m pip install --upgrade pip
 pip install -r requirements.txt
-
-python src/eda.py              # análisis exploratorio
-python src/modelado.py         # entrena los modelos clásicos y las redes
-python src/evaluacion.py       # evalúa, explica con SHAP y agrupa con K-Means
-python src/frecuencias.py      # tablas de frecuencia que usa la aplicación
 ```
 
-### Aplicación web
+## Ejecutar el análisis completo
+
+Con el entorno activado y el dataset ubicado en la carpeta `data`, ejecutar:
+
+```bash
+python src/eda.py
+python src/modelado.py
+python src/evaluacion.py
+python src/frecuencias.py
+```
+
+Cada comando realiza una etapa diferente:
+
+1. `eda.py` revisa la calidad de los datos y genera el análisis exploratorio.
+2. `modelado.py` prepara los datos, entrena los modelos y compara sus métricas.
+3. `evaluacion.py` utiliza el conjunto de prueba para la evaluación final y genera las explicaciones SHAP.
+4. `frecuencias.py` crea la información adicional utilizada por el formulario web.
+
+Los resultados se guardan automáticamente en:
+
+```text
+resultados/figuras/
+resultados/tablas/
+resultados/modelos/
+```
+
+## Ejecutar solamente la aplicación web
+
+Una vez que existen el preprocesador y el modelo entrenado, ejecutar:
 
 ```bash
 python app/app.py
 ```
 
-Después abrir <http://127.0.0.1:5000/>. La aplicación expone cuatro rutas:
+Luego abrir en el navegador:
 
-| Ruta | Qué hace |
-|------|----------|
-| `/` | Formulario para evaluar una compra. Devuelve la probabilidad, el nivel de riesgo y los factores que explican ese resultado con SHAP. |
-| `/monitoreo` | Panel con las métricas del modelo, el uso del servicio, el desvío de la probabilidad media respecto de la tasa base y las variables más influyentes. |
-| `/salud` | Estado del servicio, modelo cargado y umbral vigente, en JSON. |
-| `/api/evaluar` | API REST. Recibe un JSON con los campos de la compra y devuelve la evaluación. |
+```text
+http://127.0.0.1:5000/
+```
 
-Ejemplo de llamada a la API:
+La aplicación incluye las siguientes rutas:
+
+| Ruta | Descripción |
+|---|---|
+| `/` | Formulario para evaluar una compra. |
+| `/monitoreo` | Panel de uso y monitoreo del modelo. |
+| `/salud` | Comprueba si el servicio está funcionando. |
+| `/api/evaluar` | API que recibe datos en formato JSON. |
+
+Ejemplo de consulta a la API:
 
 ```bash
 curl -X POST http://127.0.0.1:5000/api/evaluar \
-     -H "Content-Type: application/json" \
-     -d '{"MontoTotalOC_PesosChilenos": 12000000, "precioNeto": 850000, "cantidad": 2}'
+  -H "Content-Type: application/json" \
+  -d '{"MontoTotalOC_PesosChilenos":12000000,"precioNeto":850000,"cantidad":2}'
 ```
 
-## Modelos
+## Preparación de los datos
 
-**Clásicos**, cada uno con cuatro estrategias frente al desbalance de clases
-(sin balanceo, ponderación, SMOTE y submuestreo aleatorio):
+Antes del entrenamiento se realizan, entre otras, las siguientes tareas:
 
-- Regresión logística
-- Bosque aleatorio
-- Gradient boosting por histogramas
+- conversión de variables monetarias a formato numérico;
+- normalización de nombres de regiones;
+- imputación de datos faltantes;
+- transformaciones logarítmicas para montos y cantidades;
+- creación de razones e indicadores de ausencia;
+- extracción del día y día de la semana desde la fecha;
+- codificación one-hot de variables categóricas;
+- codificación por frecuencia para categorías con muchos valores;
+- estandarización de variables numéricas;
+- separación por orden de compra en entrenamiento, validación y prueba.
 
-**Aprendizaje profundo**, con ponderación de clases:
+La separación se realiza usando el código de la orden. De esta forma, dos líneas pertenecientes a la misma compra no quedan repartidas entre entrenamiento y prueba.
 
-- `mlp_simple`: perceptrón multicapa de dos capas ocultas
-- `mlp_profunda`: tres capas ocultas de 256, 128 y 64 unidades, con
-  normalización por lotes y dropout
-- `red_residual`: bloques con conexión residual
+## Modelos evaluados
 
-La métrica principal es **AUC-PR**, porque con un 9,55 % de positivos la
-exactitud no distingue entre un modelo útil y uno que responde siempre "no".
+En el proyecto se compararon tres modelos clásicos:
 
-## Resultados
+- regresión logística;
+- bosque aleatorio;
+- gradient boosting.
 
-El mejor modelo es la **potenciación del gradiente sin ajuste de balanceo**.
-Sobre el conjunto de prueba, con 17.798 líneas que ningún modelo vio durante el
-entrenamiento ni durante la selección:
+Cada uno se probó sin balanceo, con ponderación de clases, con SMOTE y con submuestreo. Además, se entrenaron tres redes neuronales:
 
-| Umbral | AUC-ROC | AUC-PR | Precisión | Recall | F1 |
-|--------|---------|--------|-----------|--------|-----|
-| 0,500 (por omisión) | 0,938 | 0,741 | 0,883 | 0,490 | 0,630 |
-| 0,252 (ajustado en validación) | 0,938 | 0,741 | 0,696 | 0,625 | 0,659 |
+- MLP simple;
+- MLP profunda;
+- red con conexiones residuales.
 
-Dos observaciones del proceso:
+La métrica principal fue AUC-PR, ya que la clase de trato directo representa menos del 10 % de los registros y existe un desbalance importante.
 
-- Las tres arquitecturas de aprendizaje profundo quedaron por debajo de los
-  modelos de árboles. La mejor, `mlp_profunda`, alcanzó 0,636 de AUC-PR frente a
-  0,728 de la potenciación del gradiente, con más del doble de tiempo de
-  entrenamiento.
-- **Ninguna estrategia de balanceo mejoró el AUC-PR.** La ponderación, SMOTE y
-  el submuestreo mejoran el F1 medido con umbral fijo en 0,5, pero no cambian el
-  orden en que el modelo clasifica los casos. El mismo efecto se consigue
-  bajando el umbral, sin generar observaciones sintéticas ni descartar datos
-  reales.
+## Resultado principal
 
-Las métricas se generan al ejecutar el pipeline y quedan en
-`resultados/tablas/`:
+El modelo con mejor rendimiento fue `HistGradientBoostingClassifier` sin balanceo. En el conjunto de prueba obtuvo aproximadamente:
 
-- `comparacion_modelos_clasicos.csv` — las 12 combinaciones de modelo y balanceo
-- `comparacion_redes.csv` — las tres arquitecturas de aprendizaje profundo
-- `comparacion_todos.csv` — todo junto
-- `evaluacion_prueba.csv` — desempeño sobre datos no vistos
-- `importancia_shap.csv` — variables más influyentes
-- `kmeans_perfiles.csv` — conglomerados y su tasa de trato directo
+| Métrica | Resultado |
+|---|---:|
+| AUC-ROC | 0,938 |
+| AUC-PR | 0,741 |
+| Precisión | 0,696 |
+| Recall | 0,626 |
+| F1 | 0,659 |
 
-## Licencia y uso
+Para estas métricas se utilizó un umbral cercano a `0,252`, seleccionado con el conjunto de validación.
 
-Trabajo académico. Los datos provienen de la plataforma pública de
-Mercado Público y se usan solo con fines educativos.
+## Consideraciones y limitaciones
+
+La etiqueta utilizada indica el mecanismo administrativo de compra y no la existencia de fraude o incumplimiento. Por eso, el resultado del modelo solo representa similitud con el perfil observado de los tratos directos.
+
+## Integrantes
+
+- Luis Almarza
+- Nicolas Tobar
+- Eric Amigo
+
+
